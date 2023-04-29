@@ -1,0 +1,134 @@
+---
+title: "Untitled"
+author: "Ju-Won Lee"
+date: "2023-03-07"
+output: html_document
+---
+
+
+#Load Packages
+```{r setup, include=FALSE}
+library(limma)
+library(edgeR)
+library(pheatmap)
+library(ggplot2)
+```
+
+
+#Rename Data
+```{r}
+counts <- data.frame(GSE199369_P30IHC_P14IHC_P14iOHC_raw_count_matrix)
+
+#Issue with rownames disappearing solution
+
+genenames <- counts[,1]
+
+counts <- counts[,-1]
+
+colnames(counts)[1:105] <- rep("WT1", 105)
+
+colnames(counts)[106:ncol(counts)] <- rep("iO1", ncol(counts) - 105)
+```
+
+#Remove LE Genes
+```{r}
+table(rowSums(counts==0)==152)
+
+#Seems like all the data has been cleaned.
+```
+
+#Normalize
+```{r}
+rownames(counts) <- genenames
+
+DGE_counts <- DGEList(counts)
+DGE_counts <- calcNormFactors(DGE_counts)
+```
+
+#Filter Lowly Expressed Genes
+```{r}
+cutoff <- 1
+drop <- which(apply(cpm(DGE_counts), 1, max) <cutoff)
+x <- DGE_counts[-drop,]
+dim(x)
+```
+#List of columns for identification 
+```{r}
+snames <- colnames(x) 
+cultivar <- substr(snames, 1, 2)
+ 
+number <- as.numeric(gsub("[^0-9]", "", snames))
+
+group <- interaction(cultivar, number)
+group
+```
+
+#Plot
+```{r}
+plotMDS(DGE_counts, col = as.numeric(group),cex = 0.2)
+```
+
+#Model Matrix
+```{r}
+mm <- model.matrix(~ 0 + group)
+pheatmap(mm,cluster_rows = FALSE,cluster_cols = FALSE, show_rownames = FALSE)
+```
+
+#Graph
+```{r}
+voom.y.d <- voom(DGE_counts, mm, plot = T)
+```
+
+#Linear Regression
+```{r}
+fit <- lmFit(voom.y.d, mm)
+coef.fit <- fit$coefficients
+head(coef(fit))
+```
+
+#Defining the sample through contrats
+```{r}
+contr <- makeContrasts(groupWT.1 - groupiO.1, levels = colnames(coef(fit)))
+contr
+```
+
+#More contrasting steps
+```{r}
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+top.table <- topTable(tmp, sort.by = "P", n = Inf)
+head(top.table, 5)
+```
+
+#Hint of regulation
+```{r}
+coef_DEG <- coef.fit[rownames(coef.fit) %in% rownames(top.table)[1:5],]
+coef_DEG[,c(2,1)]
+```
+
+#Cut-off probability
+```{r}
+length(which(top.table$adj.P.Val < 0.000025))
+library(dplyr)
+DEGs <- top.table %>%  arrange(logFC) %>% filter(adj.P.Val <0.000025) 
+head(DEGs)
+```
+
+#Gene list to CSV
+```{r}
+top.table$Gene <- rownames(top.table)
+top.table <- top.table[,c("Gene", names(top.table)[1:6])]
+write.table(top.table, file = "WTvsiO.txt", row.names = F, sep = "\t", quote = F)
+```
+
+#Graph for DEG
+```{r}
+p_data <-   top.table %>% filter(adj.P.Val < 0.000025) 
+  
+p_data %>%  ggplot(aes(x=adj.P.Val,y=logFC)) + 
+  geom_text(label=rownames(p_data), size=4.0,alpha=0.7, aes(col=AveExpr)) 
+```
+
+
+
+
